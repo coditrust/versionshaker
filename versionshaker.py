@@ -14,16 +14,18 @@ from git import Repo
 from difflib import SequenceMatcher
 from urllib3.exceptions import InsecureRequestWarning
 import time
+from bs4 import BeautifulSoup
+from urllib.parse import urljoin
 
 # Suppress only the single warning from urllib3 needed.
 requests.packages.urllib3.disable_warnings(category=InsecureRequestWarning)
 
-
 def parser():
     parser = argparse.ArgumentParser(
-        description='Version checker 0.1',
+        description='Version checker 0.2',
         epilog='Example : python3 version_checker.py -c https://github.com/repo -u http://url/')
-    parser.add_argument('-u', '--url', help="target url ended with a /", required=True)
+    parser.add_argument('-u', '--url', help="target url", required=True)
+    parser.add_argument('-r', '--root', help="target root url ended with a /", required=False)
 
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument('-c', '--clone', help="git url (or name if wordpres,joomla,drupal,symfony,laravel) to clone locally")
@@ -63,7 +65,7 @@ def color_ratio(ratio):
 class VersionChecker:
 
     def __init__(self, url, git=None, local=None, verbose=False, files=None, extensions=None, proxy=None, tags=None,
-                 web_folder=None):
+                 web_folder=None, root=None):
         """
         Init the class
         :param url:  the remote url to check
@@ -106,6 +108,12 @@ class VersionChecker:
         self.local = local
         self.verbose = verbose
         self.wait = True
+        
+        if root == None:
+            self.root = self.url
+        else:
+            self.root = root
+        
         self.quick_answer = False
         self.repo_local_path = '.tmp/'
         if web_folder is None:
@@ -177,14 +185,11 @@ class VersionChecker:
 
     def auto_discover_files(self, url_text_content):
         """
-        Automatic static files discovery based on the url and the extensions
+        TODO : Automatic static files discovery based on the url and the extensions
         :return: list of valid files
         """
         #print('[red] recon not implemented yet [/red]')
         #return []
-        
-        from bs4 import BeautifulSoup
-        from urllib.parse import urljoin
         
         # List to hold discovered files
         discovered_files = []
@@ -206,23 +211,35 @@ class VersionChecker:
                 if file_url:
                     # Resolve relative URLs
                     length_url = len(self.url)
-                    #print(file_url)
                     full_url = urljoin(self.url, file_url)
-                    #print("-------")
+                    
+                    if full_url.find("?") != -1:
+                        full_url = full_url[:full_url.find("?")]
+                    
                     # Check if the file has a valid extension
                     if any(full_url.endswith(ext) for ext in self.extensions):
-                        #print(full_url)
+                    #if any(full_url[full_url.rfind('/')+1:].find("."+ext) for ext in self.extensions):
                         res = requests.get(full_url, proxies=self.proxy, verify=False)
                         
-                        #print(res.content)
-                        discovered_files.append((full_url[length_url-1:], res.content))
-                        if self.wait == True:
+                        if full_url.find("?") != -1 and False:
+                            discovered_files.append((full_url[length_url-1:full_url.find("?")], res.content))
+                        else:
                             
-                            time.sleep(0.5)
-                        
+                            if full_url[-1] != "/":
+                                discovered_files.append((full_url[len(self.root)-1:], res.content))
+                            else:
+                                discovered_files.append((full_url[length_url-1:], res.content))
+                            
+                        if self.wait == True:
+                            time.sleep(0.2)
+
         # Return the list of discovered files
         #if self.verbose:
         #    print("Discovered files: "+str(discovered_files), markup=False)
+        
+        if len(discovered_files) == 0:
+            print("No files found!")
+            return -1
         return discovered_files
 
 
@@ -247,8 +264,11 @@ class VersionChecker:
         #print(files)
         
         for (file, text) in files:
+            print(self.repo_local_path + self.web_folder + file)
+            
             if isfile(self.repo_local_path + self.web_folder + file):
                 try:
+                    
                     with open(self.repo_local_path + self.web_folder + file, 'r') as f:
                         git_file = f.read().encode('utf-8')
                     web_file = text.decode('utf-8')
@@ -489,6 +509,6 @@ class VersionChecker:
 
 if __name__ == "__main__":
     arg = parser()
-    checker = VersionChecker(arg.url, arg.clone, arg.local, verbose=arg.verbose, files=arg.files, proxy=arg.proxy,
-                             tags=arg.tags, web_folder=arg.path)
+    checker = VersionChecker(arg.url, arg.clone, arg.local, verbose=arg.verbose, files=None, proxy=arg.proxy,
+                             tags=arg.tags, web_folder=arg.path, root=arg.root)
     checker.execute()
