@@ -13,6 +13,7 @@ from os.path import isfile
 from git import Repo
 from difflib import SequenceMatcher
 from urllib3.exceptions import InsecureRequestWarning
+import time
 
 # Suppress only the single warning from urllib3 needed.
 requests.packages.urllib3.disable_warnings(category=InsecureRequestWarning)
@@ -21,18 +22,18 @@ requests.packages.urllib3.disable_warnings(category=InsecureRequestWarning)
 def parser():
     parser = argparse.ArgumentParser(
         description='Version checker 0.1',
-        epilog='Example : python3 version_checker.py -c https://github.com/repo -u http://url/ -f js/admin.js,js/tools.js')
+        epilog='Example : python3 version_checker.py -c https://github.com/repo -u http://url/')
     parser.add_argument('-u', '--url', help="target url ended with a /", required=True)
 
     group = parser.add_mutually_exclusive_group(required=True)
-    group.add_argument('-c', '--clone', help="git url to clone locally")
+    group.add_argument('-c', '--clone', help="git url (or name if wordpres,joomla,drupal,symfony,laravel) to clone locally")
     group.add_argument('-l', '--local', help="local git repository to compare")
 
-    group2 = parser.add_mutually_exclusive_group(required=True)
-    # group2.add_argument('-x', '--extensions', help="Extensions to check (default : js,css)", required=False)
-    group2.add_argument('-f', '--files',
-                        help="files relative path separated by ,",
-                        required=False)
+    #group2 = parser.add_mutually_exclusive_group(required=False)
+    # group2.add_argument('-x', '--extensions', help="Extensions to check (default : js,css,txt)", required=False)
+    #group2.add_argument('-f', '--files',
+    #                    help="files relative path separated by ,",
+    #                    required=False)
 
     parser.add_argument('-t', '--tags', help="force tags to use coma separated", required=False)
     parser.add_argument('-p', '--path', help="git repository web folder location (useful in case of public folder)",
@@ -77,9 +78,35 @@ class VersionChecker:
         self.url = url
         if self.url[-1:] != '/':
             self.url += '/'
-        self.git = git
+
+
+        if git[:8] != "https://":
+            if git.lower() == "wordpress":
+                self.git = "https://github.com/WordPress/WordPress"
+            elif git.lower() == "joomla":
+                self.git = "https://github.com/joomla/joomla-cms"
+            elif git.lower() == "drupal":
+                self.git = "https://github.com/drupal/drupal"
+            elif git.lower() == "symfony":
+                self.git = "https://github.com/symfony/symfony"
+            elif git.lower() == "laravel":
+                self.git = "https://github.com/laravel/laravel"
+            elif git.lower() == "grav":
+                self.git = "https://github.com/getgrav/grav"
+            elif git.lower() == "prestashop":
+                self.git = "https://github.com/PrestaShop/PrestaShop"
+            elif git.lower() == "ghost":
+                self.git = "https://github.com/tryghost/ghost"
+            elif git.lower() == "strapi":
+                self.git = "https://github.com/strapi/strapi"
+            else:
+                self.git = git
+        else:
+            self.git = git
         self.local = local
         self.verbose = verbose
+        self.wait = True
+        self.quick_answer = False
         self.repo_local_path = '.tmp/'
         if web_folder is None:
             self.web_folder = ''
@@ -100,7 +127,7 @@ class VersionChecker:
         else:
             self.files = None
             if extensions is None:
-                self.extensions = ['js', 'css']
+                self.extensions = ['js', 'css', 'txt']
             else:
                 self.extensions = [x.strip() for x in extensions.split(',')]
         if proxy is not None:
@@ -150,11 +177,54 @@ class VersionChecker:
 
     def auto_discover_files(self, url_text_content):
         """
-        TODO : Automatic static files discovery based on the url and the extensions
+        Automatic static files discovery based on the url and the extensions
         :return: list of valid files
         """
-        print('[red] recon not implemented yet [/red]')
-        return []
+        #print('[red] recon not implemented yet [/red]')
+        #return []
+        
+        from bs4 import BeautifulSoup
+        from urllib.parse import urljoin
+        
+        # List to hold discovered files
+        discovered_files = []
+        
+        # Parse the HTML content
+        soup = BeautifulSoup(url_text_content, 'html.parser')
+        
+        # Define the types of tags and attributes that could contain file URLs
+        tags_attributes = {
+            'script': 'src',
+            'link': 'href',
+            'img': 'src'
+        }
+        
+        # Iterate through the tags and their attributes to find files
+        for tag, attr in tags_attributes.items():
+            for element in soup.find_all(tag):
+                file_url = element.get(attr)
+                if file_url:
+                    # Resolve relative URLs
+                    length_url = len(self.url)
+                    #print(file_url)
+                    full_url = urljoin(self.url, file_url)
+                    #print("-------")
+                    # Check if the file has a valid extension
+                    if any(full_url.endswith(ext) for ext in self.extensions):
+                        #print(full_url)
+                        res = requests.get(full_url, proxies=self.proxy, verify=False)
+                        
+                        #print(res.content)
+                        discovered_files.append((full_url[length_url-1:], res.content))
+                        if self.wait == True:
+                            
+                            time.sleep(0.5)
+                        
+        # Return the list of discovered files
+        #if self.verbose:
+        #    print("Discovered files: "+str(discovered_files), markup=False)
+        return discovered_files
+
 
     def check_files_exists(self):
         """
@@ -174,12 +244,14 @@ class VersionChecker:
     def process_tag(self, tag_name, files):
         results = {}
         self.repo.git.checkout(tag_name, force=True)
+        #print(files)
+        
         for (file, text) in files:
             if isfile(self.repo_local_path + self.web_folder + file):
                 try:
                     with open(self.repo_local_path + self.web_folder + file, 'r') as f:
                         git_file = f.read().encode('utf-8')
-                    web_file = text.encode('utf-8')
+                    web_file = text.decode('utf-8')
                     ratio = SequenceMatcher(None, git_file, web_file).quick_ratio()
                     ratio *= 100.00
                     color = color_ratio(ratio)
@@ -320,6 +392,12 @@ class VersionChecker:
         tags_ratio_total = self.compile_tags_ratio_total(results, nb_files)
         tags_nb_best_match = self.compile_tag_nb_best_matching_files(bests_files)
         best_tags = self.compile_find_best_tag(tags_ratio_checked, tags_ratio_total, tags_nb_best_match)
+        
+        if self.quick_answer:
+            print("Possible versions:")
+            for tag in best_tags:
+                print(tag)
+            return
 
         print('\n[blue] --- RESULTS by files --- [/blue]')
         for file, value in bests_files.items():
@@ -403,6 +481,8 @@ class VersionChecker:
         files = self.init_files_to_check(response)
         self.init_git_repository()
         tags = self.init_tag_list()
+        #print(files)
+        
         results = self.check_diff(tags, files)
         self.print_results(results, len(files))
 
