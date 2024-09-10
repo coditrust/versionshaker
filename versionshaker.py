@@ -185,7 +185,7 @@ class VersionChecker:
 
     def auto_discover_files(self, url_text_content):
         """
-        TODO : Automatic static files discovery based on the url and the extensions
+        Automatic static files discovery based on the url and the extensions
         :return: list of valid files
         """
         #print('[red] recon not implemented yet [/red]')
@@ -261,10 +261,8 @@ class VersionChecker:
     def process_tag(self, tag_name, files):
         results = {}
         self.repo.git.checkout(tag_name, force=True)
-        #print(files)
         
         for (file, text) in files:
-            print(self.repo_local_path + self.web_folder + file)
             
             if isfile(self.repo_local_path + self.web_folder + file):
                 try:
